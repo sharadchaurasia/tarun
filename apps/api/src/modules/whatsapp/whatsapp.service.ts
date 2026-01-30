@@ -1,10 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { ContactsService } from '../contacts/contacts.service.js';
 import { MessagesService } from '../messages/messages.service.js';
 import { MessagesGateway } from '../messages/messages.gateway.js';
 import { AssignmentService } from '../assignment/assignment.service.js';
-import { MockWhatsAppProvider } from './whatsapp.provider.js';
+import { WhatsAppProvider } from './whatsapp.provider.js';
 import { MessageDirection, ConversationStatus } from '@prisma/client';
 
 @Injectable()
@@ -17,7 +17,7 @@ export class WhatsAppService {
     private messagesService: MessagesService,
     private messagesGateway: MessagesGateway,
     private assignmentService: AssignmentService,
-    private whatsappProvider: MockWhatsAppProvider,
+    @Inject('WHATSAPP_PROVIDER') private whatsappProvider: WhatsAppProvider,
   ) {}
 
   async handleInboundMessage(tenantId: string, payload: {
