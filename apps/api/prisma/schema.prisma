@@ -1,0 +1,295 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────
+
+enum UserRole {
+  OWNER
+  ADMIN
+  AGENT
+}
+
+enum UserAvailability {
+  ONLINE
+  AWAY
+  OFFLINE
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING
+  RESOLVED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum ChannelType {
+  WHATSAPP
+}
+
+enum AssignmentStrategy {
+  ROUND_ROBIN
+  MANUAL
+}
+
+// ─── Tables ──────────────────────────────────────────────
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users              User[]
+  contacts           Contact[]
+  conversations      Conversation[]
+  messages           Message[]
+  assignmentRules    AssignmentRule[]
+  teams              Team[]
+  callLogs           CallLog[]
+  customLeadStatuses CustomLeadStatus[]
+  conversationNotes  ConversationNote[]
+  chatbotWorkflows   ChatbotWorkflow[]
+
+  @@map("tenants")
+}
+
+model User {
+  id           String           @id @default(uuid())
+  tenantId     String           @map("tenant_id")
+  email        String
+  name         String
+  passwordHash String           @map("password_hash")
+  role         UserRole         @default(AGENT)
+  availability UserAvailability @default(OFFLINE)
+  maxOpenConvo Int              @default(10) @map("max_open_convo")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  tenant                Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedConversations Conversation[]     @relation("AssignedAgent")
+  sentMessages          Message[]
+  teamMemberships       TeamMember[]
+  callLogs              CallLog[]
+  conversationNotes     ConversationNote[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+model Contact {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  phone     String
+  name      String?
+  email     String?
+  tags      String[] @default([])
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId])
+  @@map("contacts")
+}
+
+model Conversation {
+  id              String             @id @default(uuid())
+  tenantId        String             @map("tenant_id")
+  contactId       String             @map("contact_id")
+  assignedAgentId String?            @map("assigned_agent_id")
+  channel         ChannelType        @default(WHATSAPP)
+  status          ConversationStatus @default(OPEN)
+  leadStatus      String?            @map("lead_status")
+  lastMessageAt   DateTime?          @map("last_message_at")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  tenant        Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contact       Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  assignedAgent User?              @relation("AssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  messages      Message[]
+  callLogs      CallLog[]
+  notes         ConversationNote[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, assignedAgentId])
+  @@index([tenantId, lastMessageAt(sort: Desc)])
+  @@index([tenantId, leadStatus])
+  @@map("conversations")
+}
+
+model Message {
+  id             String           @id @default(uuid())
+  tenantId       String           @map("tenant_id")
+  conversationId String           @map("conversation_id")
+  senderId       String?          @map("sender_id")
+  direction      MessageDirection
+  body           String
+  status         MessageStatus    @default(SENT)
+  externalId     String?          @map("external_id")
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User?        @relation(fields: [senderId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@map("messages")
+}
+
+model AssignmentRule {
+  id         String             @id @default(uuid())
+  tenantId   String             @map("tenant_id")
+  name       String
+  priority   Int                @default(0)
+  strategy   AssignmentStrategy @default(ROUND_ROBIN)
+  isActive   Boolean            @default(true) @map("is_active")
+  conditions Json               @default("{}")
+  teamId     String?            @map("team_id")
+  createdAt  DateTime           @default(now()) @map("created_at")
+  updatedAt  DateTime           @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  team   Team?  @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, isActive])
+  @@map("assignment_rules")
+}
+
+model Team {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  members         TeamMember[]
+  assignmentRules AssignmentRule[]
+
+  @@index([tenantId])
+  @@map("teams")
+}
+
+model TeamMember {
+  id        String   @id @default(uuid())
+  teamId    String   @map("team_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@map("team_members")
+}
+
+model CallLog {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  conversationId String   @map("conversation_id")
+  userId         String   @map("user_id")
+  notes          String   @default("")
+  outcome        String   @default("")
+  duration       Int?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, conversationId])
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@map("call_logs")
+}
+
+// ─── Custom Lead Statuses ───────────────────────────────
+
+model CustomLeadStatus {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  name      String
+  color     String   @default("#3b82f6")
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@index([tenantId, sortOrder])
+  @@map("custom_lead_statuses")
+}
+
+// ─── Conversation Notes ─────────────────────────────────
+
+model ConversationNote {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  conversationId String   @map("conversation_id")
+  userId         String   @map("user_id")
+  content        String
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@map("conversation_notes")
+}
+
+// ─── Chatbot Workflows ──────────────────────────────────
+
+model ChatbotWorkflow {
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  name        String
+  description String   @default("")
+  isActive    Boolean  @default(false) @map("is_active")
+  trigger     Json     @default("{}")
+  actions     Json     @default("[]")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  logs   WorkflowLog[]
+
+  @@index([tenantId, isActive])
+  @@map("chatbot_workflows")
+}
+
+model WorkflowLog {
+  id             String   @id @default(uuid())
+  workflowId     String   @map("workflow_id")
+  conversationId String   @map("conversation_id")
+  status         String
+  error          String?
+  executedAt     DateTime @default(now()) @map("executed_at")
+
+  workflow ChatbotWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([workflowId, executedAt(sort: Desc)])
+  @@map("workflow_logs")
+}
